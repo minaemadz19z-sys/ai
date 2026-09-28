@@ -22,6 +22,8 @@ import { AudioControls } from './components/AudioControls';
 import { LiveTranscript, TranscriptTurn } from './components/LiveTranscript';
 import { VoiceSettingsModal, PERSONAS } from './components/VoiceSettingsModal';
 import { MicrophonePermissionModal } from './components/MicrophonePermissionModal';
+import { AuthButton } from './components/AuthButton';
+import { useAuth } from './context/AuthContext';
 import {
   resampleTo16k,
   float32ToPcm16,
@@ -31,6 +33,7 @@ import {
 } from './utils/audioUtils';
 
 export default function App() {
+  const { user, saveConversationToCloud } = useAuth();
   const [voiceState, setVoiceState] = useState<VoiceState>('disconnected');
   const [isMuted, setIsMuted] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -267,7 +270,17 @@ export default function App() {
     cleanupAudioPipeline();
     setVoiceState('disconnected');
     setIsMuted(false);
-  }, [cleanupAudioPipeline]);
+
+    // Auto-save completed session to Cloud SQL and Firestore if authenticated
+    if (transcriptTurns.length > 0 && user) {
+      saveConversationToCloud({
+        title: `Voice Session (${selectedVoice})`,
+        voiceModel: selectedVoice,
+        durationSeconds: sessionDuration,
+        turns: transcriptTurns.map((t) => ({ role: t.role, text: t.text })),
+      }).catch((e) => console.warn('Could not auto-save to cloud:', e));
+    }
+  }, [cleanupAudioPipeline, transcriptTurns, user, selectedVoice, sessionDuration, saveConversationToCloud]);
 
   /**
    * Start Live Voice Session
@@ -638,6 +651,9 @@ export default function App() {
           >
             <SlidersHorizontal className="w-4 h-4" />
           </button>
+
+          {/* User Account / Google Sign-In & Cloud Sync */}
+          <AuthButton />
         </div>
       </header>
 

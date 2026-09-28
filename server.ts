@@ -14,6 +14,10 @@ const __dirname = path.dirname(__filename);
 const PORT = parseInt(process.env.PORT || '3000', 10);
 const isProd = process.env.NODE_ENV === 'production';
 
+import { requireAuth, AuthRequest } from './src/middleware/auth.ts';
+import { saveConversation, getUserConversations, getConversationWithTurns } from './src/db/conversations.ts';
+import { getOrCreateUser } from './src/db/users.ts';
+
 const app = express();
 app.use(express.json());
 
@@ -23,7 +27,89 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     hasApiKey: Boolean(process.env.GEMINI_API_KEY),
     model: 'gemini-3.8-live',
+    hasCloudSql: Boolean(process.env.SQL_HOST),
   });
+});
+
+// Synchronize authenticated Firebase user into Cloud SQL
+app.post('/api/auth/sync', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const { email, displayName, photoUrl } = req.body;
+    const uid = req.user?.uid;
+    if (!uid || !email) {
+      return res.status(400).json({ error: 'Missing uid or email' });
+    }
+
+    const user = await getOrCreateUser(uid, email, displayName, photoUrl);
+    res.json({ success: true, user });
+  } catch (error: any) {
+    console.error('Failed to sync user with database:', error);
+    res.status(500).json({ error: error.message || 'Database user sync failed' });
+  }
+});
+
+// Save voice conversation and turns to Cloud SQL
+app.post('/api/conversations', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user?.uid;
+    const email = req.user?.email || (req.body.userEmail as string) || 'user@example.com';
+    if (!uid) {
+      return res.status(401).json({ error: 'Unauthorized: Missing user UID' });
+    }
+
+    const { title, voiceModel, durationSeconds, turns } = req.body;
+    const saved = await saveConversation({
+      userUid: uid,
+      userEmail: email,
+      userDisplayName: req.user?.name,
+      title: title || 'Voice Conversation',
+      voiceModel: voiceModel || 'Zephyr',
+      durationSeconds: Number(durationSeconds) || 0,
+      turns: Array.isArray(turns) ? turns : [],
+    });
+
+    res.json({ success: true, conversation: saved });
+  } catch (error: any) {
+    console.error('Failed to save conversation:', error);
+    res.status(500).json({ error: error.message || 'Failed to save conversation to database' });
+  }
+});
+
+// Fetch user conversation history from Cloud SQL
+app.get('/api/conversations', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user?.uid;
+    if (!uid) {
+      return res.status(401).json({ error: 'Unauthorized: Missing user UID' });
+    }
+
+    const list = await getUserConversations(uid);
+    res.json({ success: true, conversations: list });
+  } catch (error: any) {
+    console.error('Failed to fetch conversations:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch conversations' });
+  }
+});
+
+// Fetch single conversation with turns from Cloud SQL
+app.get('/api/conversations/:id', requireAuth, async (req: AuthRequest, res) => {
+  try {
+    const uid = req.user?.uid;
+    const convId = parseInt(req.params.id, 10);
+    if (!uid || isNaN(convId)) {
+      return res.status(400).json({ error: 'Invalid request parameters' });
+    }
+
+    const details = await getConversationWithTurns(convId, uid);
+    if (!details) {
+      return res.status(404).json({ error: 'Conversation not found' });
+    }
+
+    res.json({ success: true, conversation: details });
+  } catch (error: any) {
+    console.error('Failed to fetch conversation details:', error);
+    res.status(500).json({ error: error.message || 'Failed to fetch conversation details' });
+  }
 });
 
 const server = http.createServer(app);
