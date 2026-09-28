@@ -21,6 +21,7 @@ import { VoiceVisualizer, VoiceState } from './components/VoiceVisualizer';
 import { AudioControls } from './components/AudioControls';
 import { LiveTranscript, TranscriptTurn } from './components/LiveTranscript';
 import { VoiceSettingsModal, PERSONAS } from './components/VoiceSettingsModal';
+import { MicrophonePermissionModal } from './components/MicrophonePermissionModal';
 import {
   resampleTo16k,
   float32ToPcm16,
@@ -35,18 +36,71 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [userVolume, setUserVolume] = useState(0);
   const [aiVolume, setAiVolume] = useState(0);
   const [frequencyData, setFrequencyData] = useState<Uint8Array | null>(null);
 
-  // Settings state
-  const [selectedVoice, setSelectedVoice] = useState('Zephyr');
-  const [selectedPersona, setSelectedPersona] = useState('natural');
-  const [systemPrompt, setSystemPrompt] = useState(PERSONAS[0].systemInstruction);
-  const [selectedModel, setSelectedModel] = useState('gemini-3.8-live');
+  // LocalStorage keys
+  const STORAGE_KEY_TRANSCRIPT = 'livevoice_transcript_turns';
+  const STORAGE_KEY_VOICE = 'livevoice_selected_voice';
+  const STORAGE_KEY_PERSONA = 'livevoice_selected_persona';
+  const STORAGE_KEY_PROMPT = 'livevoice_system_prompt';
+  const STORAGE_KEY_MODEL = 'livevoice_selected_model';
 
-  // Transcript state
-  const [transcriptTurns, setTranscriptTurns] = useState<TranscriptTurn[]>([]);
+  // Settings state persisted with localStorage
+  const [selectedVoice, setSelectedVoice] = useState(() => {
+    return localStorage.getItem(STORAGE_KEY_VOICE) || 'Zephyr';
+  });
+  const [selectedPersona, setSelectedPersona] = useState(() => {
+    return localStorage.getItem(STORAGE_KEY_PERSONA) || 'natural';
+  });
+  const [systemPrompt, setSystemPrompt] = useState(() => {
+    return localStorage.getItem(STORAGE_KEY_PROMPT) || PERSONAS[0].systemInstruction;
+  });
+  const [selectedModel, setSelectedModel] = useState(() => {
+    return localStorage.getItem(STORAGE_KEY_MODEL) || 'gemini-3.8-live';
+  });
+
+  // Transcript state persisted with localStorage
+  const [transcriptTurns, setTranscriptTurns] = useState<TranscriptTurn[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_TRANSCRIPT);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          return parsed.map((item: any) => ({
+            ...item,
+            timestamp: new Date(item.timestamp),
+          }));
+        }
+      }
+    } catch (e) {
+      console.warn('Could not read transcript from localStorage:', e);
+    }
+    return [];
+  });
+
+  // Automatically save transcript turns to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_TRANSCRIPT, JSON.stringify(transcriptTurns));
+    } catch (e) {
+      console.warn('Could not persist transcript turns:', e);
+    }
+  }, [transcriptTurns]);
+
+  // Automatically save voice settings to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_VOICE, selectedVoice);
+      localStorage.setItem(STORAGE_KEY_PERSONA, selectedPersona);
+      localStorage.setItem(STORAGE_KEY_PROMPT, systemPrompt);
+      localStorage.setItem(STORAGE_KEY_MODEL, selectedModel);
+    } catch (e) {
+      console.warn('Could not persist voice settings:', e);
+    }
+  }, [selectedVoice, selectedPersona, systemPrompt, selectedModel]);
 
   // Session duration timer state
   const [sessionDuration, setSessionDuration] = useState<number>(0);
@@ -223,7 +277,7 @@ export default function App() {
     setVoiceState('connecting');
 
     try {
-      // 1. Request Microphone Permission
+      // 1. Request Microphone Permission with resilient fallbacks
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
@@ -236,13 +290,47 @@ export default function App() {
           },
         });
         mediaStreamRef.current = stream;
-      } catch (micErr: any) {
-        console.error('Microphone access denied:', micErr);
-        setErrorMessage(
-          'Microphone permission was denied. Please allow microphone access in your browser settings to have a voice conversation.'
-        );
-        setVoiceState('disconnected');
-        return;
+      } catch (firstErr: any) {
+        console.warn('Initial mic request with specific constraints failed, checking error:', firstErr);
+        const isPermissionDenied =
+          firstErr?.name === 'NotAllowedError' ||
+          firstErr?.name === 'PermissionDeniedError' ||
+          String(firstErr?.message || firstErr).toLowerCase().includes('permission');
+
+        if (isPermissionDenied) {
+          console.warn('Microphone access denied:', firstErr?.message || firstErr);
+          setErrorMessage(
+            'Microphone access was denied. Please allow microphone permissions in your browser address bar.'
+          );
+          setShowPermissionModal(true);
+          setVoiceState('disconnected');
+          return;
+        }
+
+        // Attempt fallback with basic audio constraint
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaStreamRef.current = stream;
+        } catch (fallbackErr: any) {
+          console.warn('Fallback microphone access failed:', fallbackErr?.message || fallbackErr);
+          const fallbackDenied =
+            fallbackErr?.name === 'NotAllowedError' ||
+            fallbackErr?.name === 'PermissionDeniedError' ||
+            String(fallbackErr?.message || fallbackErr).toLowerCase().includes('permission');
+
+          if (fallbackDenied) {
+            setErrorMessage(
+              'Microphone access was denied. Please allow microphone permissions in your browser address bar.'
+            );
+            setShowPermissionModal(true);
+          } else {
+            setErrorMessage(
+              fallbackErr?.message || 'Unable to access your microphone. Please check your audio input device.'
+            );
+          }
+          setVoiceState('disconnected');
+          return;
+        }
       }
 
       // 2. Initialize Output AudioContext (24kHz for Gemini Live speech)
@@ -422,7 +510,7 @@ export default function App() {
         }
       };
     } catch (err: any) {
-      console.error('[LiveClient] Initialization error:', err);
+      console.warn('[LiveClient] Initialization warning:', err?.message || err);
       setErrorMessage(err?.message || 'Failed to start live voice session.');
       handleEndSession();
     }
@@ -557,18 +645,39 @@ export default function App() {
       <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 py-6 max-w-4xl mx-auto w-full">
         {/* Error Alert */}
         {errorMessage && (
-          <div className="w-full max-w-md mb-6 p-4 rounded-2xl bg-red-950/40 border border-red-500/30 text-red-200 text-xs flex items-start gap-3 backdrop-blur-md shadow-xl animate-fade-in">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="font-semibold text-red-300 mb-0.5">Connection Notice</p>
-              <p className="text-red-300/80 leading-relaxed">{errorMessage}</p>
+          <div className="w-full max-w-md mb-6 p-4 rounded-2xl bg-red-950/40 border border-red-500/30 text-red-200 text-xs flex flex-col gap-3 backdrop-blur-md shadow-xl animate-fade-in">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-semibold text-red-300 mb-0.5">Connection Notice</p>
+                <p className="text-red-300/80 leading-relaxed">{errorMessage}</p>
+              </div>
             </div>
-            <button
-              onClick={() => setErrorMessage(null)}
-              className="text-red-400 hover:text-red-200 text-xs px-2 py-1 rounded bg-red-900/30 hover:bg-red-900/50 cursor-pointer"
-            >
-              Dismiss
-            </button>
+            <div className="flex items-center justify-end gap-2 pt-1 border-t border-red-500/20">
+              {errorMessage.toLowerCase().includes('microphone') && (
+                <button
+                  onClick={() => setShowPermissionModal(true)}
+                  className="text-purple-300 hover:text-white px-2.5 py-1 rounded-lg bg-purple-900/40 hover:bg-purple-900/60 font-medium transition-colors cursor-pointer"
+                >
+                  Permissions Guide
+                </button>
+              )}
+              <button
+                onClick={() => {
+                  setErrorMessage(null);
+                  handleStartSession();
+                }}
+                className="text-white px-2.5 py-1 rounded-lg bg-red-800/60 hover:bg-red-700/80 font-medium transition-colors cursor-pointer"
+              >
+                Try Again
+              </button>
+              <button
+                onClick={() => setErrorMessage(null)}
+                className="text-red-400 hover:text-red-200 px-2 py-1 rounded hover:bg-red-900/30 transition-colors cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
           </div>
         )}
 
@@ -594,8 +703,15 @@ export default function App() {
           turns={transcriptTurns}
           isOpen={showTranscript}
           onClose={() => setShowTranscript(false)}
-          onClear={() => setTranscriptTurns([])}
+          onClear={() => {
+            setTranscriptTurns([]);
+            try {
+              localStorage.removeItem(STORAGE_KEY_TRANSCRIPT);
+            } catch (_) {}
+          }}
           currentModelVoice={selectedVoice}
+          sessionDuration={sessionDuration}
+          isSessionActive={voiceState !== 'disconnected' && voiceState !== 'connecting'}
         />
       </main>
 
@@ -626,6 +742,13 @@ export default function App() {
         model={selectedModel}
         onChangeModel={setSelectedModel}
         isSessionActive={voiceState !== 'disconnected'}
+      />
+
+      {/* Microphone Permission Modal */}
+      <MicrophonePermissionModal
+        isOpen={showPermissionModal}
+        onClose={() => setShowPermissionModal(false)}
+        onRetry={handleStartSession}
       />
     </div>
   );
