@@ -1,0 +1,6 @@
+{
+  "name": "LiveVoice AI - Real-Time Voice Conversation",
+  "description": "Experience natural, low-latency real-time voice conversations with Gemini Live API, featuring interactive voice turns, interruption handling, and live visual feedback.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
