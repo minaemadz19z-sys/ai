@@ -25,6 +25,33 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "voiceModel", "createdAt"]
+    },
+    "ChatSession": {
+      "title": "ChatSession",
+      "description": "Multi-turn Gemini chat session",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "model": { "type": "string" },
+        "systemInstruction": { "type": "string" },
+        "messages": { "type": "array" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "model", "updatedAt"]
+    },
+    "TranscriptRecord": {
+      "title": "TranscriptRecord",
+      "description": "Recorded speech transcribed with gemini-3.5-transcribe",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "text": { "type": "string" },
+        "model": { "type": "string" },
+        "audioDuration": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "text", "model", "createdAt"]
     }
   },
   "firestore": {
@@ -35,6 +62,14 @@
     "/users/{userId}/conversations/{conversationId}": {
       "schema": "Conversation",
       "description": "User conversation archives"
+    },
+    "/users/{userId}/chat_sessions/{sessionId}": {
+      "schema": "ChatSession",
+      "description": "User multi-turn chat sessions"
+    },
+    "/users/{userId}/transcripts/{transcriptId}": {
+      "schema": "TranscriptRecord",
+      "description": "User transcribed audio archives"
     }
   }
 }

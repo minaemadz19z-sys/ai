@@ -107,6 +107,10 @@ export const AuthButton: React.FC = () => {
               <Database className="w-3.5 h-3.5 shrink-0" />
               <span>Cloud SQL & Firestore Active</span>
             </div>
+            <div className="flex items-center gap-1.5 text-blue-400">
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              <span>Google Drive & Classroom Scopes Active</span>
+            </div>
           </div>
 
           <div className="pt-2 border-t border-neutral-800">

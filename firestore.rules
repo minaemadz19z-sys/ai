@@ -27,6 +27,18 @@ service cloud.firestore {
         allow create, update: if isOwner(userId) && isValidId(conversationId);
         allow delete: if isOwner(userId);
       }
+
+      match /chat_sessions/{sessionId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(sessionId);
+        allow delete: if isOwner(userId);
+      }
+
+      match /transcripts/{transcriptId} {
+        allow get, list: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidId(transcriptId);
+        allow delete: if isOwner(userId);
+      }
     }
   }
 }

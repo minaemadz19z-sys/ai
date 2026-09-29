@@ -12,6 +12,7 @@ import {
   ChevronDown,
   FileText,
   FileCode,
+  HardDrive,
 } from 'lucide-react';
 
 export interface TranscriptTurn {
@@ -30,6 +31,7 @@ interface LiveTranscriptProps {
   currentModelVoice: string;
   sessionDuration?: number;
   isSessionActive?: boolean;
+  onOpenWorkspace?: () => void;
 }
 
 export const LiveTranscript: React.FC<LiveTranscriptProps> = ({
@@ -40,6 +42,7 @@ export const LiveTranscript: React.FC<LiveTranscriptProps> = ({
   currentModelVoice,
   sessionDuration = 0,
   isSessionActive = false,
+  onOpenWorkspace,
 }) => {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const downloadMenuRef = useRef<HTMLDivElement | null>(null);
@@ -263,6 +266,23 @@ export const LiveTranscript: React.FC<LiveTranscriptProps> = ({
                         <div className="text-[10px] text-neutral-400">Structured data with turns</div>
                       </div>
                     </button>
+                    {onOpenWorkspace && (
+                      <button
+                        onClick={() => {
+                          setShowDownloadMenu(false);
+                          onOpenWorkspace();
+                        }}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs text-neutral-200 hover:text-white hover:bg-emerald-600/20 text-left transition-colors cursor-pointer group border-t border-neutral-800/80 mt-1 pt-2"
+                      >
+                        <div className="p-1 rounded bg-emerald-500/10 text-emerald-400 group-hover:bg-emerald-500/20">
+                          <HardDrive className="w-3.5 h-3.5" />
+                        </div>
+                        <div>
+                          <div className="font-medium text-neutral-200 group-hover:text-white">Google Drive Hub</div>
+                          <div className="text-[10px] text-neutral-400">Upload & browse Drive files</div>
+                        </div>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

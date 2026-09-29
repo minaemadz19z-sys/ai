@@ -16,14 +16,32 @@ import {
   Github,
   HelpCircle,
   Clock,
+  HardDrive,
+  Bot,
+  FileAudio,
+  Lightbulb,
+  Brain,
+  History,
 } from 'lucide-react';
 import { VoiceVisualizer, VoiceState } from './components/VoiceVisualizer';
 import { AudioControls } from './components/AudioControls';
 import { LiveTranscript, TranscriptTurn } from './components/LiveTranscript';
 import { VoiceSettingsModal, PERSONAS } from './components/VoiceSettingsModal';
 import { MicrophonePermissionModal } from './components/MicrophonePermissionModal';
+import { WorkspaceModal } from './components/WorkspaceModal';
+import { AudioTranscriberModal } from './components/AudioTranscriberModal';
+import { GeminiChatbotModal } from './components/GeminiChatbotModal';
+import { UserMemoryModal } from './components/UserMemoryModal';
 import { AuthButton } from './components/AuthButton';
 import { useAuth } from './context/AuthContext';
+import {
+  UserProfileMemory,
+  FirestoreConversation,
+  saveUserMemoryToFirestore,
+  getUserMemoryFromFirestore,
+  saveConversationToFirestore,
+  getUserConversationsFromFirestore,
+} from './services/firestoreService';
 import {
   resampleTo16k,
   float32ToPcm16,
@@ -39,10 +57,18 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
+  const [showWorkspace, setShowWorkspace] = useState(false);
+  const [showTranscriber, setShowTranscriber] = useState(false);
+  const [showChatbot, setShowChatbot] = useState(false);
+  const [chatbotInitialPrompt, setChatbotInitialPrompt] = useState('');
   const [showPermissionModal, setShowPermissionModal] = useState(false);
   const [userVolume, setUserVolume] = useState(0);
   const [aiVolume, setAiVolume] = useState(0);
   const [frequencyData, setFrequencyData] = useState<Uint8Array | null>(null);
+
+  const handleLoadContextIntoPrompt = (contextText: string, contextTitle: string) => {
+    setSystemPrompt(`${PERSONAS[0].systemInstruction}\n\n${contextText}`);
+  };
 
   // LocalStorage keys
   const STORAGE_KEY_TRANSCRIPT = 'livevoice_transcript_turns';
@@ -50,13 +76,86 @@ export default function App() {
   const STORAGE_KEY_PERSONA = 'livevoice_selected_persona';
   const STORAGE_KEY_PROMPT = 'livevoice_system_prompt';
   const STORAGE_KEY_MODEL = 'livevoice_selected_model';
+  const STORAGE_KEY_USER_MEMORY = 'livevoice_user_memory';
+  const STORAGE_KEY_CONV_HISTORY = 'livevoice_conversations_history';
+
+  const [showMemoryModal, setShowMemoryModal] = useState(false);
+
+  // User Memory & Knowledge Dossier (Continuous Memory for Alex)
+  const [userMemory, setUserMemory] = useState<UserProfileMemory>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_USER_MEMORY);
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return {
+      name: 'Friend',
+      primaryLanguage: 'English',
+      englishLevel: 'Intermediate',
+      goals: ['Speak fluent conversational English', 'Master daily American idioms & culture'],
+      interests: ['American culture', 'Tech & innovation', 'Daily life'],
+      facts: ['Practicing daily conversational English for 30 minutes with Alex'],
+      culturalTopicsExplored: [],
+      totalSessions: 0,
+      totalDurationSeconds: 0,
+      updatedAt: new Date().toISOString(),
+    };
+  });
+
+  // Conversation history archive
+  const [pastConversations, setPastConversations] = useState<FirestoreConversation[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_CONV_HISTORY);
+      if (saved) return JSON.parse(saved);
+    } catch (_) {}
+    return [];
+  });
+
+  // Sync memory & conversations with Firestore when user logs in
+  useEffect(() => {
+    if (user?.uid) {
+      getUserMemoryFromFirestore(user.uid).then((cloudMem) => {
+        if (cloudMem) {
+          setUserMemory((prev) => ({
+            ...prev,
+            ...cloudMem,
+            name: cloudMem.name || user.displayName || prev.name,
+            facts: Array.from(new Set([...prev.facts, ...(cloudMem.facts || [])])),
+            interests: Array.from(new Set([...prev.interests, ...(cloudMem.interests || [])])),
+            goals: Array.from(new Set([...prev.goals, ...(cloudMem.goals || [])])),
+          }));
+        }
+      });
+      getUserConversationsFromFirestore(user.uid).then((list) => {
+        if (list && list.length > 0) {
+          setPastConversations(list);
+        }
+      });
+    }
+  }, [user]);
+
+  // Persist userMemory to localStorage & Cloud
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_USER_MEMORY, JSON.stringify(userMemory));
+    } catch (_) {}
+    if (user?.uid) {
+      saveUserMemoryToFirestore(user.uid, userMemory);
+    }
+  }, [userMemory, user]);
+
+  // Persist pastConversations to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CONV_HISTORY, JSON.stringify(pastConversations));
+    } catch (_) {}
+  }, [pastConversations]);
 
   // Settings state persisted with localStorage
   const [selectedVoice, setSelectedVoice] = useState(() => {
-    return localStorage.getItem(STORAGE_KEY_VOICE) || 'Zephyr';
+    return localStorage.getItem(STORAGE_KEY_VOICE) || 'Alex';
   });
   const [selectedPersona, setSelectedPersona] = useState(() => {
-    return localStorage.getItem(STORAGE_KEY_PERSONA) || 'natural';
+    return localStorage.getItem(STORAGE_KEY_PERSONA) || 'alex_culture_coach';
   });
   const [systemPrompt, setSystemPrompt] = useState(() => {
     return localStorage.getItem(STORAGE_KEY_PROMPT) || PERSONAS[0].systemInstruction;
@@ -280,7 +379,81 @@ export default function App() {
         turns: transcriptTurns.map((t) => ({ role: t.role, text: t.text })),
       }).catch((e) => console.warn('Could not auto-save to cloud:', e));
     }
-  }, [cleanupAudioPipeline, transcriptTurns, user, selectedVoice, sessionDuration, saveConversationToCloud]);
+
+    // Auto-extract and build memory facts & conversation history
+    if (transcriptTurns.length > 0) {
+      const turnsCopy = transcriptTurns.map((t) => ({ role: t.role, text: t.text }));
+      const sessionDur = sessionDuration;
+      const currentVoice = selectedVoice;
+
+      fetch('/api/memory/extract', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: turnsCopy,
+          existingFacts: userMemory.facts,
+          existingInterests: userMemory.interests,
+          existingGoals: userMemory.goals,
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success && data.memory) {
+            const m = data.memory;
+            setUserMemory((prev) => {
+              const updatedFacts = Array.from(new Set([...prev.facts, ...(m.newFacts || [])]));
+              const updatedInterests = Array.from(new Set([...prev.interests, ...(m.newInterests || [])]));
+              const updatedGoals = Array.from(new Set([...prev.goals, ...(m.newGoals || [])]));
+              const updatedTopics = Array.from(
+                new Set([...prev.culturalTopicsExplored, ...(m.culturalTopicsDiscussed || [])])
+              );
+
+              return {
+                ...prev,
+                name: m.detectedName || prev.name,
+                englishLevel: m.detectedEnglishLevel || prev.englishLevel,
+                facts: updatedFacts,
+                interests: updatedInterests,
+                goals: updatedGoals,
+                culturalTopicsExplored: updatedTopics,
+                totalSessions: (prev.totalSessions || 0) + 1,
+                totalDurationSeconds: (prev.totalDurationSeconds || 0) + sessionDur,
+                lastConversationSummary: m.conversationSummary,
+                updatedAt: new Date().toISOString(),
+              };
+            });
+
+            // Create conversation history record
+            const newRecord: FirestoreConversation = {
+              id: `conv_${Date.now()}`,
+              userId: user?.uid || 'guest',
+              title: `Chat with ${currentVoice} (${m.culturalTopicsDiscussed?.[0] || 'English Immersion'})`,
+              voiceModel: currentVoice,
+              durationSeconds: sessionDur,
+              totalTurns: turnsCopy.length,
+              summary: m.conversationSummary,
+              turns: turnsCopy,
+              createdAt: new Date().toISOString(),
+            };
+
+            setPastConversations((prev) => [newRecord, ...prev]);
+
+            if (user?.uid) {
+              saveConversationToFirestore(user.uid, newRecord);
+            }
+          }
+        })
+        .catch((err) => console.warn('Memory extraction notice:', err));
+    }
+  }, [
+    cleanupAudioPipeline,
+    transcriptTurns,
+    user,
+    selectedVoice,
+    sessionDuration,
+    saveConversationToCloud,
+    userMemory,
+  ]);
 
   /**
    * Start Live Voice Session
@@ -369,12 +542,32 @@ export default function App() {
 
       ws.onopen = () => {
         console.log('[LiveClient] Connected to live proxy server');
-        // Send session initialization configuration
+        // Build continuous memory prompt for Alex / Gemini Live
+        const memoryInstruction = `
+${systemPrompt}
+
+[USER CONTINUOUS MEMORY & PERSONAL DOSSIER]
+You are speaking with: ${userMemory.name || 'Friend'}.
+Primary Language: English. Keep this voice conversation entirely in conversational American English.
+English Proficiency: ${userMemory.englishLevel || 'Intermediate'}.
+Key Facts You Remember About This Person:
+${userMemory.facts && userMemory.facts.length > 0 ? userMemory.facts.map((f: string) => `- ${f}`).join('\n') : '- First conversation! Greet them warmly and learn about their day.'}
+Interests: ${userMemory.interests?.join(', ') || 'American culture and conversation'}
+Goals: ${userMemory.goals?.join(', ') || 'Fluent daily conversational English'}
+${userMemory.culturalTopicsExplored && userMemory.culturalTopicsExplored.length > 0 ? `Past Cultural Topics Explored: ${userMemory.culturalTopicsExplored.join(', ')}` : ''}
+
+CRITICAL MEMORY RULES FOR ALEX:
+1. Greet the user by name if known. Remember what they told you in past conversations.
+2. Naturally reference their facts, interests, or previous topics like an authentic friend.
+3. The primary language MUST be English. Speak naturally in conversational American English with friendly cadence and idioms.
+4. Keep spoken turns punchy (2-4 natural sentences) so the user has plenty of space to speak and practice.`;
+
+        // Send session initialization configuration with full memory
         ws.send(
           JSON.stringify({
             type: 'init',
             voice: selectedVoice,
-            systemInstruction: systemPrompt,
+            systemInstruction: memoryInstruction,
             model: selectedModel,
           })
         );
@@ -652,6 +845,61 @@ export default function App() {
             <SlidersHorizontal className="w-4 h-4" />
           </button>
 
+          {/* Daily American Culture Tips Button */}
+          <button
+            onClick={() => setShowSettings(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-950/40 border border-blue-800/60 text-xs text-blue-300 hover:text-white hover:bg-blue-900/50 transition-all cursor-pointer shadow-sm shadow-blue-950/40"
+            title="Daily American Culture & Conversational Tips by Alex"
+          >
+            <Lightbulb className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <span className="hidden xs:inline">Alex's Tips</span>
+          </button>
+
+          {/* User Memory & History Button */}
+          <button
+            onClick={() => setShowMemoryModal(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-950/50 border border-blue-500/40 text-xs text-blue-200 hover:text-white hover:bg-blue-900/60 transition-all cursor-pointer shadow-sm shadow-blue-900/20"
+            title="User Memory & Conversation History: See what Alex remembers about you"
+          >
+            <Brain className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <span className="hidden sm:inline">Memory & History</span>
+            {userMemory.facts.length > 0 && (
+              <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] font-bold text-blue-200">
+                {userMemory.facts.length}
+              </span>
+            )}
+          </button>
+
+          {/* Transcribe Audio Feature */}
+          <button
+            onClick={() => setShowTranscriber(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+            title="Transcribe Audio with gemini-3.5-transcribe"
+          >
+            <Mic className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+            <span className="hidden xs:inline">Transcribe</span>
+          </button>
+
+          {/* Gemini Chatbot Feature */}
+          <button
+            onClick={() => setShowChatbot(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+            title="Multi-turn Gemini Chatbot"
+          >
+            <Bot className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+            <span className="hidden xs:inline">Chatbot</span>
+          </button>
+
+          {/* Google Workspace (Drive & Classroom) Hub */}
+          <button
+            onClick={() => setShowWorkspace(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+            title="Google Drive & Classroom Hub"
+          >
+            <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+            <span className="hidden xs:inline">Workspace</span>
+          </button>
+
           {/* User Account / Google Sign-In & Cloud Sync */}
           <AuthButton />
         </div>
@@ -712,6 +960,24 @@ export default function App() {
               }
             }}
           />
+
+          {/* Active Memory & Language Indicator */}
+          <div className="mt-2 sm:mt-4 flex flex-wrap items-center justify-center gap-2 text-xs select-none">
+            <button
+              onClick={() => setShowMemoryModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-blue-950/50 hover:bg-blue-900/60 border border-blue-500/30 text-blue-300 transition-colors cursor-pointer shadow-sm shadow-blue-950/40"
+              title="Click to view all facts & conversation history Alex remembers"
+            >
+              <Brain className="w-3.5 h-3.5 text-blue-400" />
+              <span>
+                Alex remembers: <strong className="text-white">{userMemory.name || 'Friend'}</strong>{' '}
+                <span className="text-blue-400">({userMemory.facts.length} facts)</span>
+              </span>
+            </button>
+            <span className="text-[11px] px-2.5 py-1 rounded-full bg-neutral-900/90 border border-neutral-800 text-neutral-300">
+              Primary: <strong className="text-white">English</strong> • {userMemory.englishLevel}
+            </span>
+          </div>
         </div>
 
         {/* Optional Live Transcript Drawer */}
@@ -728,6 +994,7 @@ export default function App() {
           currentModelVoice={selectedVoice}
           sessionDuration={sessionDuration}
           isSessionActive={voiceState !== 'disconnected' && voiceState !== 'connecting'}
+          onOpenWorkspace={() => setShowWorkspace(true)}
         />
       </main>
 
@@ -744,6 +1011,52 @@ export default function App() {
           showTranscript={showTranscript}
         />
       </footer>
+
+      {/* Audio Transcriber Modal (gemini-3.5-transcribe) */}
+      <AudioTranscriberModal
+        isOpen={showTranscriber}
+        onClose={() => setShowTranscriber(false)}
+        onSendToChat={(text) => {
+          setChatbotInitialPrompt(text);
+          setShowChatbot(true);
+        }}
+        onLoadIntoVoicePrompt={(text) => {
+          handleLoadContextIntoPrompt(text, 'Audio Transcription');
+        }}
+      />
+
+      {/* Gemini Chatbot Modal (Multi-Turn with Roles & Model Switching) */}
+      <GeminiChatbotModal
+        isOpen={showChatbot}
+        onClose={() => setShowChatbot(false)}
+        initialPrompt={chatbotInitialPrompt}
+        onOpenTranscriber={() => setShowTranscriber(true)}
+      />
+
+      {/* Google Workspace Modal (Drive & Classroom) */}
+      <WorkspaceModal
+        isOpen={showWorkspace}
+        onClose={() => setShowWorkspace(false)}
+        turns={transcriptTurns}
+        currentModelVoice={selectedVoice}
+        onLoadContextIntoPrompt={handleLoadContextIntoPrompt}
+      />
+
+      {/* User Memory & History Modal */}
+      <UserMemoryModal
+        isOpen={showMemoryModal}
+        onClose={() => setShowMemoryModal(false)}
+        memory={userMemory}
+        onUpdateMemory={setUserMemory}
+        conversations={pastConversations}
+        onLoadSessionContext={(summary) => {
+          handleLoadContextIntoPrompt(
+            `\n[PREVIOUS TOPIC RECAP TO CONTINUE]\nAlex, recall and continue discussing what was talked about previously: "${summary}"`,
+            'Previous Conversation'
+          );
+          setShowMemoryModal(false);
+        }}
+      />
 
       {/* Settings Modal */}
       <VoiceSettingsModal

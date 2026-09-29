@@ -19,7 +19,24 @@ import { saveConversation, getUserConversations, getConversationWithTurns } from
 import { getOrCreateUser } from './src/db/users.ts';
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '35mb' }));
+app.use(express.urlencoded({ extended: true, limit: '35mb' }));
+
+// Helper to get GoogleGenAI instance
+const getGeminiClient = () => {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured on the server');
+  }
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: {
+        'User-Agent': 'aistudio-build',
+      },
+    },
+  });
+};
 
 // API health and status check
 app.get('/api/health', (req, res) => {
@@ -27,8 +44,174 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     hasApiKey: Boolean(process.env.GEMINI_API_KEY),
     model: 'gemini-3.8-live',
+    transcribeModel: 'gemini-3.5-transcribe',
+    chatModels: ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'],
     hasCloudSql: Boolean(process.env.SQL_HOST),
   });
+});
+
+// Audio transcription endpoint using gemini-3.5-transcribe
+app.post('/api/transcribe', async (req, res) => {
+  try {
+    const { audioBase64, mimeType } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'Missing audioBase64 data in request body' });
+    }
+
+    const ai = getGeminiClient();
+
+    // Call gemini-3.5-transcribe model for audio transcription
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-transcribe',
+      contents: [
+        {
+          inlineData: {
+            mimeType: mimeType || 'audio/webm',
+            data: audioBase64,
+          },
+        },
+        {
+          text: 'Transcribe this spoken audio accurately and verbatim. Return only the transcription.',
+        },
+      ],
+    });
+
+    const transcript = response.text?.trim() || '';
+    res.json({
+      success: true,
+      transcript,
+      model: 'gemini-3.5-transcribe',
+    });
+  } catch (error: any) {
+    console.error('[Transcribe] Error with gemini-3.5-transcribe:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to transcribe audio with gemini-3.5-transcribe',
+    });
+  }
+});
+
+// Multi-turn Gemini chatbot endpoint
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { messages, model = 'gemini-3.5-flash', systemInstruction } = req.body;
+    if (!messages || !Array.isArray(messages) || messages.length === 0) {
+      return res.status(400).json({ error: 'Missing messages array in request body' });
+    }
+
+    // Supported models per brief:
+    // - gemini-3.1-pro-preview for particularly complex tasks
+    // - gemini-3.5-flash for general tasks
+    // - gemini-3.1-flash-lite for tasks that should happen fast
+    const allowedModels = ['gemini-3.1-pro-preview', 'gemini-3.5-flash', 'gemini-3.1-flash-lite'];
+    const selectedModel = allowedModels.includes(model) ? model : 'gemini-3.5-flash';
+
+    const ai = getGeminiClient();
+
+    // Format conversation history for Gemini generateContent
+    const contents = messages.map((m: any) => ({
+      role: m.role === 'user' ? 'user' : 'model',
+      parts: [{ text: String(m.text || m.content || '') }],
+    }));
+
+    const config: any = {};
+    if (systemInstruction && typeof systemInstruction === 'string' && systemInstruction.trim()) {
+      config.systemInstruction = systemInstruction.trim();
+    }
+
+    const response = await ai.models.generateContent({
+      model: selectedModel,
+      contents,
+      config: Object.keys(config).length > 0 ? config : undefined,
+    });
+
+    res.json({
+      success: true,
+      text: response.text?.trim() || '',
+      model: selectedModel,
+    });
+  } catch (error: any) {
+    console.error('[Chat] Error generating chat response:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to generate chat response from Gemini',
+    });
+  }
+});
+
+// Extract user profile facts and conversational memory from conversation transcript
+app.post('/api/memory/extract', async (req, res) => {
+  try {
+    const { transcript, existingFacts = [], existingInterests = [], existingGoals = [] } = req.body;
+    if (!transcript || !Array.isArray(transcript) || transcript.length === 0) {
+      return res.status(400).json({ error: 'Missing or empty transcript array' });
+    }
+
+    const ai = getGeminiClient();
+
+    // Format transcript turns for analysis
+    const formattedDialogue = transcript
+      .map((t: any) => `${t.role === 'user' ? 'User' : 'Alex (AI)'}: ${t.text}`)
+      .join('\n');
+
+    const prompt = `Analyze this spoken voice conversation between a user and Alex (an American conversational AI coach).
+Your goal is to build an ongoing personal knowledge dossier/memory about the user so Alex can remember everything about them in future conversations.
+The primary language of interaction and notes MUST be English.
+
+Existing memory facts already known:
+${existingFacts.length > 0 ? existingFacts.map((f: string) => `- ${f}`).join('\n') : '(None yet)'}
+
+Conversation Transcript:
+${formattedDialogue}
+
+Extract and return a valid JSON object strictly matching this schema:
+{
+  "detectedName": string | null (user's name if mentioned),
+  "detectedEnglishLevel": "Beginner" | "Intermediate" | "Advanced" | "Fluent",
+  "newFacts": string[] (concrete, durable facts about the user: occupation, location, family/friends, hobbies, personal preferences. Do not duplicate existing facts),
+  "newInterests": string[] (topics, hobbies, or cultural areas they enjoy),
+  "newGoals": string[] (any learning goals, life goals, or aspirations mentioned),
+  "culturalTopicsDiscussed": string[] (American culture, slang, or daily habits discussed),
+  "conversationSummary": string (a concise 1-2 sentence English summary of what was discussed)
+}
+Return ONLY valid JSON with no markdown fences.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.5-flash',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: {
+        responseMimeType: 'application/json',
+      },
+    });
+
+    let extracted: any = {};
+    try {
+      const text = response.text?.trim() || '{}';
+      extracted = JSON.parse(text);
+    } catch (parseErr) {
+      console.warn('[Memory] Failed to parse JSON, falling back:', parseErr);
+    }
+
+    res.json({
+      success: true,
+      memory: {
+        detectedName: extracted.detectedName || null,
+        detectedEnglishLevel: extracted.detectedEnglishLevel || 'Intermediate',
+        newFacts: Array.isArray(extracted.newFacts) ? extracted.newFacts : [],
+        newInterests: Array.isArray(extracted.newInterests) ? extracted.newInterests : [],
+        newGoals: Array.isArray(extracted.newGoals) ? extracted.newGoals : [],
+        culturalTopicsDiscussed: Array.isArray(extracted.culturalTopicsDiscussed)
+          ? extracted.culturalTopicsDiscussed
+          : [],
+        conversationSummary:
+          extracted.conversationSummary || 'Spoke with Alex about daily conversational English and American culture.',
+        primaryLanguage: 'English',
+      },
+    });
+  } catch (error: any) {
+    console.error('[Memory] Error extracting user memory:', error);
+    res.status(500).json({
+      error: error?.message || 'Failed to extract user memory from transcript',
+    });
+  }
 });
 
 // Synchronize authenticated Firebase user into Cloud SQL
@@ -164,12 +347,22 @@ wss.on('connection', async (clientWs: WebSocket) => {
 
       if (data.type === 'init') {
         const {
-          voice = 'Zephyr',
+          voice = 'Alex',
           systemInstruction = 'You are a friendly, warm, natural, and concise voice AI assistant. Keep responses punchy, expressive, and conversational.',
           model = 'gemini-3.8-live',
         } = data;
 
-        console.log(`[Live] Initializing session with model=${model}, voice=${voice}`);
+        // Map Alex to 'Puck' (youthful native American male voice) for Gemini Live API
+        let targetVoiceName = 'Puck';
+        if (voice === 'Alex' || voice.toLowerCase().includes('alex')) {
+          targetVoiceName = 'Puck';
+        } else if (['Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede'].includes(voice)) {
+          targetVoiceName = voice;
+        } else {
+          targetVoiceName = 'Puck';
+        }
+
+        console.log(`[Live] Initializing session with model=${model}, requestedVoice=${voice}, liveVoice=${targetVoiceName}`);
 
         try {
           liveSession = await ai.live.connect({
@@ -178,7 +371,7 @@ wss.on('connection', async (clientWs: WebSocket) => {
               responseModalities: [Modality.AUDIO],
               speechConfig: {
                 voiceConfig: {
-                  prebuiltVoiceConfig: { voiceName: voice },
+                  prebuiltVoiceConfig: { voiceName: targetVoiceName },
                 },
               },
               systemInstruction: {
