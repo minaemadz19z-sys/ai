@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">LiveVoice AI - Real-Time Voice Conversation</string>
+    <string name="tab_live_voice">Live Voice</string>
+    <string name="tab_chat">AI Chat</string>
+    <string name="tab_transcribe">Transcribe</string>
+    <string name="tab_history">History</string>
+    <string name="tab_memory">Memory</string>
+    <string name="voice_alex">Alex</string>
+    <string name="persona_alex_title">Alex • American Culture &amp; Daily Practice</string>
+    <string name="persona_alex_desc">Conversational young American guy for daily 30-min culture immersion, slang &amp; natural fluency.</string>
+    <string name="status_disconnected">Disconnected</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_listening">Listening…</string>
+    <string name="status_speaking">Alex Speaking…</string>
+    <string name="start_session">Start Live Call</string>
+    <string name="end_session">End Call</string>
+    <string name="mute">Mute</string>
+    <string name="unmute">Unmute</string>
+    <string name="interrupt">Interrupt</string>
+    <string name="american_culture_tips">American Culture &amp; Slang Tips</string>
+    <string name="settings_title">Voice &amp; Intelligence Settings</string>
+    <string name="user_dossier_title">User Knowledge Dossier</string>
+</resources>
