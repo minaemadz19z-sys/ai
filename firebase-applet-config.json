@@ -3,6 +3,7 @@
   "appId": "1:996915147127:web:33f49aae29ed8b4d4c7172",
   "apiKey": "AIzaSyBPNu_dH6PYol479UFhaQ3Od3WPLTLoiQQ",
   "authDomain": "phat-xanthometer-hvr20.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-livevoiceairealt-2b7bfd16-09c4-474b-9fc7-c1c58ec48bdb",
   "storageBucket": "phat-xanthometer-hvr20.firebasestorage.app",
   "messagingSenderId": "996915147127",
   "measurementId": "",

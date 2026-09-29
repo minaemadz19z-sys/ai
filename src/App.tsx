@@ -22,6 +22,12 @@ import {
   Lightbulb,
   Brain,
   History,
+  Subtitles,
+  Layers,
+  ChevronDown,
+  Copy,
+  Check,
+  X,
 } from 'lucide-react';
 import { VoiceVisualizer, VoiceState } from './components/VoiceVisualizer';
 import { AudioControls } from './components/AudioControls';
@@ -80,6 +86,25 @@ export default function App() {
   const STORAGE_KEY_CONV_HISTORY = 'livevoice_conversations_history';
 
   const [showMemoryModal, setShowMemoryModal] = useState(false);
+  const [showLiveCaptions, setShowLiveCaptions] = useState(true);
+  const [toolsMenuOpen, setToolsMenuOpen] = useState(false);
+  const [copiedCaption, setCopiedCaption] = useState(false);
+  const toolsMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // Close tools menu on outside click
+  useEffect(() => {
+    const handleOutsideClick = (e: MouseEvent) => {
+      if (toolsMenuRef.current && !toolsMenuRef.current.contains(e.target as Node)) {
+        setToolsMenuOpen(false);
+      }
+    };
+    if (toolsMenuOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [toolsMenuOpen]);
 
   // User Memory & Knowledge Dossier (Continuous Memory for Alex)
   const [userMemory, setUserMemory] = useState<UserProfileMemory>(() => {
@@ -823,82 +848,116 @@ CRITICAL MEMORY RULES FOR ALEX:
             </div>
           )}
 
-          {/* Active Voice badge */}
+          {/* Unified Central Pro Navigation Bar */}
+          <div className="flex items-center bg-neutral-900/90 border border-neutral-800 rounded-full p-1 shadow-inner backdrop-blur-md">
+            {/* Alex's Culture & Conversational Tips */}
+            <button
+              onClick={() => setShowSettings(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-blue-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+              title="Daily American Culture & Conversational Tips by Alex"
+            >
+              <Lightbulb className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span className="hidden sm:inline">Tips</span>
+            </button>
+
+            {/* User Memory & Learning Progress */}
+            <button
+              onClick={() => setShowMemoryModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+              title="View Alex's Memory & Weekly Learning Progress"
+            >
+              <Brain className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+              <span className="hidden sm:inline">Memory & Progress</span>
+              {userMemory.facts.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-purple-500/25 text-[10px] font-bold text-purple-300">
+                  {userMemory.facts.length}
+                </span>
+              )}
+            </button>
+
+            {/* Voice & Intelligence Settings */}
+            <button
+              onClick={() => setShowSettings(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-xs font-medium text-neutral-400 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+              title="Voice & Intelligence Settings"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span className="hidden md:inline text-neutral-300">{selectedVoice}</span>
+            </button>
+          </div>
+
+          {/* Real-time Subtitles / Live CC Toggle Button */}
           <button
-            onClick={() => setShowSettings(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+            onClick={() => setShowLiveCaptions((prev) => !prev)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all cursor-pointer border ${
+              showLiveCaptions
+                ? 'bg-blue-600/20 border-blue-500/40 text-blue-300 shadow-sm shadow-blue-500/20'
+                : 'bg-neutral-900 border-neutral-800 text-neutral-400 hover:text-neutral-200'
+            }`}
+            title={showLiveCaptions ? 'Live Subtitles are ON (click to hide)' : 'Turn Live Subtitles ON'}
           >
-            <Volume2 className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-            <span className="hidden xs:inline">{selectedVoice}</span>
-            <span className="hidden sm:inline text-neutral-500">•</span>
-            <span className="hidden sm:inline text-neutral-400 truncate max-w-[100px]">
-              {selectedModel.replace('gemini-3.8-', '')}
-            </span>
+            <Subtitles className={`w-3.5 h-3.5 ${showLiveCaptions ? 'text-blue-400' : 'text-neutral-500'}`} />
+            <span className="hidden xs:inline">CC</span>
           </button>
 
-          {/* Settings Button */}
-          <button
-            onClick={() => setShowSettings(true)}
-            className="p-2 rounded-xl text-neutral-400 hover:text-white hover:bg-neutral-900 border border-transparent hover:border-neutral-800 transition-colors cursor-pointer"
-            title="Open Voice Settings"
-          >
-            <SlidersHorizontal className="w-4 h-4" />
-          </button>
+          {/* Pro Tools Menu Dropdown */}
+          <div className="relative" ref={toolsMenuRef}>
+            <button
+              onClick={() => setToolsMenuOpen((prev) => !prev)}
+              className="flex items-center gap-1 px-2.5 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs font-medium text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
+              title="Additional AI Tools (Transcribe, Chatbot, Workspace)"
+            >
+              <Layers className="w-3.5 h-3.5 text-neutral-400" />
+              <span className="hidden sm:inline">Tools</span>
+              <ChevronDown className="w-3 h-3 text-neutral-500" />
+            </button>
 
-          {/* Daily American Culture Tips Button */}
-          <button
-            onClick={() => setShowSettings(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-950/40 border border-blue-800/60 text-xs text-blue-300 hover:text-white hover:bg-blue-900/50 transition-all cursor-pointer shadow-sm shadow-blue-950/40"
-            title="Daily American Culture & Conversational Tips by Alex"
-          >
-            <Lightbulb className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-            <span className="hidden xs:inline">Alex's Tips</span>
-          </button>
+            {toolsMenuOpen && (
+              <div className="absolute right-0 mt-2 w-52 bg-neutral-900 border border-neutral-800 rounded-2xl shadow-2xl p-1.5 z-50 backdrop-blur-xl animate-fade-in text-xs space-y-0.5">
+                <button
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    setShowTranscriber(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 p-2 rounded-xl text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                >
+                  <Mic className="w-4 h-4 text-pink-400 shrink-0" />
+                  <div>
+                    <div className="font-medium text-white">Transcribe Audio</div>
+                    <div className="text-[10px] text-neutral-400">gemini-3.5-transcribe</div>
+                  </div>
+                </button>
 
-          {/* User Memory & History Button */}
-          <button
-            onClick={() => setShowMemoryModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-blue-950/50 border border-blue-500/40 text-xs text-blue-200 hover:text-white hover:bg-blue-900/60 transition-all cursor-pointer shadow-sm shadow-blue-900/20"
-            title="User Memory & Conversation History: See what Alex remembers about you"
-          >
-            <Brain className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-            <span className="hidden sm:inline">Memory & History</span>
-            {userMemory.facts.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-blue-500/30 text-[10px] font-bold text-blue-200">
-                {userMemory.facts.length}
-              </span>
+                <button
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    setShowChatbot(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 p-2 rounded-xl text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                >
+                  <Bot className="w-4 h-4 text-purple-400 shrink-0" />
+                  <div>
+                    <div className="font-medium text-white">Gemini Chatbot</div>
+                    <div className="text-[10px] text-neutral-400">Multi-turn AI Assistant</div>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setToolsMenuOpen(false);
+                    setShowWorkspace(true);
+                  }}
+                  className="w-full flex items-center gap-2.5 p-2 rounded-xl text-neutral-200 hover:text-white hover:bg-neutral-800 transition-colors text-left cursor-pointer"
+                >
+                  <HardDrive className="w-4 h-4 text-blue-400 shrink-0" />
+                  <div>
+                    <div className="font-medium text-white">Google Workspace</div>
+                    <div className="text-[10px] text-neutral-400">Drive & Classroom Sync</div>
+                  </div>
+                </button>
+              </div>
             )}
-          </button>
-
-          {/* Transcribe Audio Feature */}
-          <button
-            onClick={() => setShowTranscriber(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
-            title="Transcribe Audio with gemini-3.5-transcribe"
-          >
-            <Mic className="w-3.5 h-3.5 text-pink-400 shrink-0" />
-            <span className="hidden xs:inline">Transcribe</span>
-          </button>
-
-          {/* Gemini Chatbot Feature */}
-          <button
-            onClick={() => setShowChatbot(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
-            title="Multi-turn Gemini Chatbot"
-          >
-            <Bot className="w-3.5 h-3.5 text-purple-400 shrink-0" />
-            <span className="hidden xs:inline">Chatbot</span>
-          </button>
-
-          {/* Google Workspace (Drive & Classroom) Hub */}
-          <button
-            onClick={() => setShowWorkspace(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-neutral-900 border border-neutral-800 text-xs text-neutral-300 hover:text-white hover:bg-neutral-800 transition-all cursor-pointer"
-            title="Google Drive & Classroom Hub"
-          >
-            <HardDrive className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-            <span className="hidden xs:inline">Workspace</span>
-          </button>
+          </div>
 
           {/* User Account / Google Sign-In & Cloud Sync */}
           <AuthButton />
@@ -978,6 +1037,120 @@ CRITICAL MEMORY RULES FOR ALEX:
               Primary: <strong className="text-white">English</strong> • {userMemory.englishLevel}
             </span>
           </div>
+
+          {/* In-Call Real-Time Live Subtitles Overlay (for reading words missed during voice chat) */}
+          {showLiveCaptions && (
+            <div className="w-full max-w-2xl mt-4 sm:mt-5 px-3 z-10 animate-fade-in">
+              <div className="relative rounded-2xl bg-neutral-900/85 border border-neutral-800/90 p-4 shadow-2xl backdrop-blur-xl transition-all">
+                {/* Caption Bar Header */}
+                <div className="flex items-center justify-between pb-2.5 mb-2.5 border-b border-neutral-800/60 text-xs">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-blue-500/15 border border-blue-500/30 text-blue-300 font-semibold text-[11px]">
+                      <Subtitles className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Live Speech Subtitles</span>
+                    </div>
+
+                    {voiceState === 'speaking' && (
+                      <span className="flex items-center gap-1 text-blue-400 text-[11px] font-mono animate-pulse">
+                        <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+                        Alex Speaking...
+                      </span>
+                    )}
+                    {voiceState === 'listening' && (
+                      <span className="flex items-center gap-1 text-emerald-400 text-[11px] font-mono">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                        Listening to you...
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 text-neutral-400">
+                    {transcriptTurns.length > 0 && (
+                      <button
+                        onClick={() => {
+                          const lastText = transcriptTurns[transcriptTurns.length - 1].text;
+                          navigator.clipboard.writeText(lastText);
+                          setCopiedCaption(true);
+                          setTimeout(() => setCopiedCaption(false), 2000);
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded text-[11px] hover:text-white hover:bg-neutral-800 transition-colors cursor-pointer"
+                        title="Copy last spoken line"
+                      >
+                        {copiedCaption ? (
+                          <>
+                            <Check className="w-3 h-3 text-emerald-400" />
+                            <span className="text-emerald-400">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-3 h-3" />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
+                    )}
+
+                    <button
+                      onClick={() => setShowTranscript(true)}
+                      className="hover:text-blue-300 text-[11px] underline underline-offset-2 transition-colors cursor-pointer"
+                      title="Open full conversation history drawer"
+                    >
+                      Full Drawer
+                    </button>
+
+                    <button
+                      onClick={() => setShowLiveCaptions(false)}
+                      className="hover:text-white transition-colors cursor-pointer p-1 rounded hover:bg-neutral-800"
+                      title="Hide live subtitles overlay"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Subtitle Dialogue Content */}
+                {transcriptTurns.length > 0 ? (
+                  <div className="space-y-2">
+                    {/* Previous turn context (if any) to prevent losing thread */}
+                    {transcriptTurns.length > 1 && (
+                      <div className="text-xs text-neutral-500 line-clamp-1 italic">
+                        <span className="text-neutral-400 not-italic font-semibold">
+                          {transcriptTurns[transcriptTurns.length - 2].role === 'user' ? 'You: ' : 'Alex: '}
+                        </span>
+                        "{transcriptTurns[transcriptTurns.length - 2].text}"
+                      </div>
+                    )}
+
+                    {/* Active latest spoken turn */}
+                    <div className="flex items-start gap-2.5">
+                      <div
+                        className={`px-2 py-0.5 rounded-lg text-[10px] font-bold uppercase tracking-wider shrink-0 mt-0.5 shadow-sm ${
+                          transcriptTurns[transcriptTurns.length - 1].role === 'user'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                        }`}
+                      >
+                        {transcriptTurns[transcriptTurns.length - 1].role === 'user' ? 'You' : 'Alex'}
+                      </div>
+                      <p className="text-sm sm:text-base font-medium text-white leading-relaxed tracking-wide selection:bg-blue-600">
+                        {transcriptTurns[transcriptTurns.length - 1].text}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-2.5 text-center text-xs text-neutral-400">
+                    {voiceState === 'disconnected' ? (
+                      <span>Start speaking with Alex to see live real-time American English subtitles here.</span>
+                    ) : (
+                      <span className="text-blue-300 animate-pulse font-medium">
+                        Alex is listening... Speak in English or say "Hey Alex" to see live speech-to-text subtitles.
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Optional Live Transcript Drawer */}
